@@ -25,6 +25,8 @@ public class TaskExecutor<T> {
     private Set<T> uncompletedTargets = new HashSet<>();
     private Set<T> currentlyExecutingTargets = new HashSet<>();
 
+    private RuntimeException exception;
+
     public synchronized void buildTaskFromDependencyInformation(T taskTarget, Collection<T> dependsOn, Runnable task) {
 
         LOGGER.info("Registering: " + taskTarget + " with dependsOn: " + dependsOn);
@@ -64,6 +66,7 @@ public class TaskExecutor<T> {
         discoverAndScheduleRootTasks();
         waitForCompletion();
         resetGlobalState();
+        checkForException();
     }
 
     private void setupGlobalState() {
@@ -95,6 +98,15 @@ public class TaskExecutor<T> {
         }
     }
 
+    private void checkForException(){
+
+        RuntimeException capturedException = exception;
+        if (capturedException != null){
+            exception = null;
+            throw capturedException;
+        }
+    }
+
     private Collection<T> determineTargetsWithNoUpstream() {
         Collection<T> returned = new HashSet<>();
         for (Map.Entry<T, Collection<T>> entry : upstreamMap.entrySet()){
@@ -115,9 +127,13 @@ public class TaskExecutor<T> {
     }
 
     private void discoverAndScheduleDownstreamDependencies(T id) {
-        for (T downStreamTarget : downstreamMap.get(id)) {
-            if (isEligibleForScheduling(downStreamTarget)) {
-                scheduleTask(downStreamTarget);
+        Collection<T> downSteamTargets = downstreamMap.get(id);
+
+        if (downSteamTargets != null){
+            for (T downStreamTarget : downstreamMap.get(id)) {
+                if (isEligibleForScheduling(downStreamTarget)) {
+                    scheduleTask(downStreamTarget);
+                }
             }
         }
     }
@@ -137,6 +153,17 @@ public class TaskExecutor<T> {
         completedTargets.add(id);
         uncompletedTargets.remove(id);
         currentlyExecutingTargets.remove(id);
+    }
+
+    private void handleCatastrophicFailure(Task failedTask, RuntimeException exception){
+        this.exception = exception;
+
+        globalLock.lock();
+        try{
+            waitingCondition.signalAll();
+        }finally{
+            globalLock.unlock();
+        }
     }
 
     private void scheduleTask(T target) {
@@ -172,9 +199,15 @@ public class TaskExecutor<T> {
 
         @Override
         public void run() {
-            LOGGER.info(id + " executing in thread: " + Thread.currentThread().getName());
-            theRunnable.run();
-            handleCompletionForTask(this);
+            try{
+                LOGGER.info(id + " executing in thread: " + Thread.currentThread().getName());
+                theRunnable.run();
+                handleCompletionForTask(this);
+            }catch (Exception ex){
+                LOGGER.error("error", ex);
+                handleCatastrophicFailure(this, new RuntimeException(ex));
+            }
+
         }
     }
 

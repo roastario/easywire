@@ -72,7 +72,7 @@ public class InstantiatingRunnable implements Runnable {
         }
 
         if (objectToUse == null) {
-            throw new RuntimeException("Failed to find a provider for type: " + parameterType + " with qualifier ");
+            throw new RuntimeException("Failed to find a provider for type: " + parameterType);
         }
         return objectToUse;
     }
