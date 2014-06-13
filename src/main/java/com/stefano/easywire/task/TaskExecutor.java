@@ -37,6 +37,49 @@ public class TaskExecutor<T> {
 
     }
 
+    private void verifyReachability(){
+        Collection<T> rootNodes = determineTargetsWithNoUpstream();
+        for (T target : uncompletedTargets){
+            if (!isConnectedToRoot(target, rootNodes)){
+                throw new IllegalStateException("Could not find a way to satisfy requirements of: " + target);
+            }
+        }
+    }
+
+    private boolean isConnectedToRoot(T target, Collection<T> roots){
+        for (T root : roots){
+            if (connected(target, root)){
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean connected(T target, T start){
+        //Do a dfs
+
+        Queue<T> nodesToVisit = new ArrayDeque<>();
+        nodesToVisit.add(start);
+        Set<T> visitedNodes = new HashSet<>();
+        while (!nodesToVisit.isEmpty()){
+            T nodeToVist = nodesToVisit.remove();
+            if (nodeToVist ==  target){
+                return true;
+            }
+            visitedNodes.add(nodeToVist);
+            Collection<T> children = downstreamMap.get(nodeToVist);
+            if (children == null){
+                continue;
+            }
+            for (T child : children){
+                if (!visitedNodes.contains(child)){
+                    nodesToVisit.add(child);
+                }
+            }
+        }
+        return false;
+    }
+
     private void populateUpstreamInfo(T taskTarget, Collection<T> dependsOn) {
         Collection<T> upstreamDependencies = upstreamMap.get(taskTarget);
         if (upstreamDependencies == null) {
@@ -58,11 +101,11 @@ public class TaskExecutor<T> {
     }
 
     public void execute() throws InterruptedException {
-
         setupGlobalState();
         if (uncompletedTargets.size() == 0){
             return;
         }
+        verifyReachability();
         discoverAndScheduleRootTasks();
         waitForCompletion();
         resetGlobalState();

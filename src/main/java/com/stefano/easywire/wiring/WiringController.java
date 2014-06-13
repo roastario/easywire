@@ -80,6 +80,7 @@ public class WiringController {
 
         buildExecutorGraphs(classes, instantiatedObjects, providedBeans);
         try {
+
             executor.execute();
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
