@@ -14,11 +14,13 @@ public class InstantiatingRunnable implements Runnable {
     private final Class classToInstantiate;
     private final ConcurrentMap<Class, Object> instantiatedObjects;
     private final ConcurrentMap<Class, ConcurrentMap<String, Object>> preInstantiatedProvides;
+    private final Class[] implementedInterfaces;
 
     public InstantiatingRunnable(Class classToInstantiate, ConcurrentMap<Class, Object> instantiatedObjects, ConcurrentMap<Class, ConcurrentMap<String, Object>> preInstantiatedProvides) {
         this.classToInstantiate = classToInstantiate;
         this.instantiatedObjects = instantiatedObjects;
         this.preInstantiatedProvides = preInstantiatedProvides;
+        implementedInterfaces = classToInstantiate.getInterfaces();
     }
 
     private static <AT extends Annotation> AT getParameterAnnotation(Annotation[] parameterAnnotations, Class<AT> classToFind) {

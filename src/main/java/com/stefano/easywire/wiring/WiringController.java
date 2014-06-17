@@ -35,13 +35,17 @@ public class WiringController {
         Set<MethodQualifierPair> pairs = new HashSet<>();
         for (Method beanProviderMethod : beanProviderMethods) {
             Class<?> returnedType = beanProviderMethod.getReturnType();
-            BeanProvider annotation = getMethodAnnotation(beanProviderMethod, BeanProvider.class);
-            String qualifier = annotation.value();
-            MethodQualifierPair methodQualifierPair = new MethodQualifierPair(beanProviderMethod, qualifier, returnedType);
-            if (pairs.contains(methodQualifierPair)) {
-                throw new RuntimeException("Duplicated qualifier / type combo: " + methodQualifierPair);
+            List<Class<?>> matchingClasses = asList(returnedType.getInterfaces());
+            matchingClasses.add(returnedType);
+            for (Class matchingClass : matchingClasses){
+                BeanProvider annotation = getMethodAnnotation(beanProviderMethod, BeanProvider.class);
+                String qualifier = annotation.value();
+                MethodQualifierPair methodQualifierPair = new MethodQualifierPair(beanProviderMethod, qualifier, matchingClass);
+                if (pairs.contains(methodQualifierPair)) {
+                    throw new RuntimeException("Duplicated qualifier / type combo: " + methodQualifierPair);
+                }
+                pairs.add(methodQualifierPair);
             }
-            pairs.add(methodQualifierPair);
         }
         return pairs;
     }
