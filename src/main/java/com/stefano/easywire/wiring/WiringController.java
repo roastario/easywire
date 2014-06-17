@@ -35,7 +35,7 @@ public class WiringController {
         Set<MethodQualifierPair> pairs = new HashSet<>();
         for (Method beanProviderMethod : beanProviderMethods) {
             Class<?> returnedType = beanProviderMethod.getReturnType();
-            List<Class<?>> matchingClasses = asList(returnedType.getInterfaces());
+            List<Class<?>> matchingClasses = new ArrayList<>(asList(returnedType.getInterfaces()));
             matchingClasses.add(returnedType);
             for (Class matchingClass : matchingClasses){
                 BeanProvider annotation = getMethodAnnotation(beanProviderMethod, BeanProvider.class);
@@ -108,6 +108,11 @@ public class WiringController {
                 }
             });
             executor.buildTaskFromDependencyInformation(clazz, filteredList, new InstantiatingRunnable(clazz, instantiatedObjects, preInstantiatedProvides));
+            Class[] implementedInterfaces = clazz.getInterfaces();
+            for (Class implementedInterface : implementedInterfaces){
+                executor.buildTaskFromDependencyInformation(implementedInterface, Collections.<Class>singleton(clazz), new ReplicatingRunnable(implementedInterface, clazz, instantiatedObjects));
+            }
+
         }
     }
 
