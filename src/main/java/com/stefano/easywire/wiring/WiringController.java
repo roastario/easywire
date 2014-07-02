@@ -2,7 +2,6 @@ package com.stefano.easywire.wiring;
 
 import com.google.common.base.Predicate;
 import com.google.common.collect.Collections2;
-import com.stefano.easywire.task.TaskExecutor;
 import org.reflections.Reflections;
 import org.reflections.scanners.MethodAnnotationsScanner;
 import org.reflections.scanners.SubTypesScanner;
@@ -17,6 +16,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.concurrent.*;
+import uk.stefano.executor.TaskExecutor;
 
 import static java.util.Arrays.asList;
 
