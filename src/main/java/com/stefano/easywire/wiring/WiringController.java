@@ -16,6 +16,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.concurrent.*;
+
 import uk.stefano.executor.TaskExecutor;
 
 import static java.util.Arrays.asList;
@@ -31,26 +32,27 @@ public class WiringController {
         }
     };
 
-    private static Set<MethodQualifierPair> buildProviderInfo(Collection<Method> beanProviderMethods) {
-        Set<MethodQualifierPair> pairs = new HashSet<>();
+    private static Set<ClassAndQualifierMethodKey> buildProviderInfo(Collection<Method> beanProviderMethods) {
+        Set<ClassAndQualifierMethodKey> pairs = new HashSet<>();
         for (Method beanProviderMethod : beanProviderMethods) {
             Class<?> returnedType = beanProviderMethod.getReturnType();
             List<Class<?>> matchingClasses = new ArrayList<>(asList(returnedType.getInterfaces()));
             matchingClasses.add(returnedType);
-            for (Class matchingClass : matchingClasses){
+            for (Class matchingClass : matchingClasses) {
                 BeanProvider annotation = getMethodAnnotation(beanProviderMethod, BeanProvider.class);
                 String qualifier = annotation.value();
-                MethodQualifierPair methodQualifierPair = new MethodQualifierPair(beanProviderMethod, qualifier, matchingClass);
-                if (pairs.contains(methodQualifierPair)) {
-                    throw new RuntimeException("Duplicated qualifier / type combo: " + methodQualifierPair);
+                ClassAndQualifierMethodKey qualifierKey = new ClassAndQualifierMethodKey(beanProviderMethod, qualifier, matchingClass);
+                System.err.println("qualifier: " + qualifier + " class: " + matchingClass);
+                if (pairs.contains(qualifierKey)) {
+                    throw new RuntimeException("Duplicated qualifier / type combo: " + qualifierKey);
                 }
-                pairs.add(methodQualifierPair);
+                pairs.add(qualifierKey);
             }
         }
         return pairs;
     }
 
-    private static <K1, V1, K> void dealWithConcurrentMapShit(ConcurrentMap<K, ConcurrentMap<K1, V1>> map, K key, K1 subKey, V1 subValue) {
+    private static <K1, V1, K> void concurrentMapHelper(ConcurrentMap<K, ConcurrentMap<K1, V1>> map, K key, K1 subKey, V1 subValue) {
         ConcurrentMap<K1, V1> mapToAddTo = map.get(key);
         if (mapToAddTo == null) {
             ConcurrentMap<K1, V1> newMap = new ConcurrentHashMap<>();
@@ -78,7 +80,7 @@ public class WiringController {
 
         Set<Class<?>> classes = reflections.getTypesAnnotatedWith(Bean.class);
         Set<Method> beanProviderMethods = reflections.getMethodsAnnotatedWith(BeanProvider.class);
-        Set<MethodQualifierPair> providers = buildProviderInfo(beanProviderMethods);
+        Set<ClassAndQualifierMethodKey> providers = buildProviderInfo(beanProviderMethods);
         ConcurrentMap<Class, ConcurrentMap<String, Object>> providedBeans = concurrentlyInstantiateProvidedObjects(providers);
         ConcurrentMap<Class, Object> instantiatedObjects = new ConcurrentHashMap<>();
 
@@ -92,6 +94,15 @@ public class WiringController {
         return instantiatedObjects;
     }
 
+    private Provided getProvidedAnnotationFromParameterAnnotations(Annotation[] parameterAnnotations) {
+        for (Annotation parameterAnnotation : parameterAnnotations) {
+            if (parameterAnnotation.annotationType() == Provided.class) {
+                return (Provided) parameterAnnotation;
+            }
+        }
+        return null;
+    }
+
 
     private void buildExecutorGraphs(Set<Class<?>> classes, ConcurrentMap<Class, Object> instantiatedObjects, final ConcurrentMap<Class, ConcurrentMap<String, Object>> preInstantiatedProvides) {
         for (Class<?> clazz : classes) {
@@ -101,15 +112,35 @@ public class WiringController {
             }
             Constructor constructor = constructors[0];
             final Class[] parameterTypes = constructor.getParameterTypes();
-            Collection filteredList = Collections2.filter(asList(parameterTypes), new Predicate<Class>() {
-                @Override
-                public boolean apply(@Nullable Class input) {
-                    return !preInstantiatedProvides.containsKey(input);
+            final Annotation[][] constructorParameterAnnotations = constructor.getParameterAnnotations();
+
+            Collection<Class> filteredList = new ArrayList<>();
+
+            //KEEP ALL CLASSES THAT CANNOT BE FOUND IN THE PRE_INSTANTIATED
+            for (int parameterIdx = 0; parameterIdx < parameterTypes.length; parameterIdx++) {
+                Class type = parameterTypes[parameterIdx];
+                Provided providedAnnotation = getProvidedAnnotationFromParameterAnnotations(constructorParameterAnnotations[parameterIdx]);
+
+                if (!preInstantiatedProvides.containsKey(type)) {
+                    filteredList.add(type);
+                } else {
+                    if (providedAnnotation == null) {
+                        if (preInstantiatedProvides.containsKey(type)) {
+                            filteredList.add(type);
+                        }
+                    } else {
+                        if (!preInstantiatedProvides.get(type).containsKey(providedAnnotation.value())) {
+                            filteredList.add(type);
+                        }
+                    }
                 }
-            });
+
+
+            }
+
             executor.buildTaskFromDependencyInformation(clazz, filteredList, new InstantiatingRunnable(clazz, instantiatedObjects, preInstantiatedProvides));
             Class[] implementedInterfaces = clazz.getInterfaces();
-            for (Class implementedInterface : implementedInterfaces){
+            for (Class implementedInterface : implementedInterfaces) {
                 executor.buildTaskFromDependencyInformation(implementedInterface, Collections.<Class>singleton(clazz), new ReplicatingRunnable(implementedInterface, clazz, instantiatedObjects));
             }
 
@@ -117,11 +148,11 @@ public class WiringController {
     }
 
 
-    private ConcurrentMap<Class, ConcurrentMap<String, Object>> concurrentlyInstantiateProvidedObjects(Set<MethodQualifierPair> pairs) {
+    private ConcurrentMap<Class, ConcurrentMap<String, Object>> concurrentlyInstantiateProvidedObjects(Set<ClassAndQualifierMethodKey> pairs) {
         final ConcurrentMap<Class, ConcurrentMap<String, Object>> instantiatedObjects = new ConcurrentHashMap<>();
 
         List<Future> waitables = new ArrayList<>();
-        for (final MethodQualifierPair pair : pairs) {
+        for (final ClassAndQualifierMethodKey pair : pairs) {
 
             Runnable r = new Runnable() {
 
@@ -134,7 +165,7 @@ public class WiringController {
                     try {
                         Object instantiatedProviderClass = providerClass.newInstance();
                         Object providedObject = pair.getMethod().invoke(instantiatedProviderClass);
-                        dealWithConcurrentMapShit(instantiatedObjects, toInstantiate, qualifier, providedObject);
+                        concurrentMapHelper(instantiatedObjects, toInstantiate, qualifier, providedObject);
                     } catch (InstantiationException | IllegalAccessException | InvocationTargetException e) {
                         e.printStackTrace();
                     }
@@ -153,12 +184,12 @@ public class WiringController {
         return instantiatedObjects;
     }
 
-    private static class MethodQualifierPair {
+    private static class ClassAndQualifierMethodKey {
         private final String qualifier;
         private final Method method;
         private final Class providedClass;
 
-        private MethodQualifierPair(Method method, String qualifier, Class providedClass) {
+        private ClassAndQualifierMethodKey(Method method, String qualifier, Class providedClass) {
             this.qualifier = qualifier;
             this.method = method;
             this.providedClass = providedClass;
@@ -167,7 +198,7 @@ public class WiringController {
         @Override
         public String toString() {
 
-            return "MethodQualifierPair{" +
+            return "ClassAndQualifierMethodKey{" +
                     "qualifier='" + qualifier + '\'' +
                     ", method=" + method +
                     ", providedClass=" + providedClass +
@@ -188,11 +219,10 @@ public class WiringController {
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
 
-            MethodQualifierPair that = (MethodQualifierPair) o;
+            ClassAndQualifierMethodKey that = (ClassAndQualifierMethodKey) o;
 
             if (!providedClass.equals(that.providedClass)) return false;
             if (!qualifier.equals(that.qualifier)) return false;
-//            if (!method.equals(that.method)) return false;
 
             return true;
         }
